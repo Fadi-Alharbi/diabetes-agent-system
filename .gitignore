@@ -1,22 +1,24 @@
-# Byte-compiled / optimized / DLL files
+# Node
+node_modules/
+frontend/node_modules/
+dist/
+build/
+
+# Python
 __pycache__/
 *.py[cod]
 *$py.class
-
-# Virtual environments
 .venv/
 venv/
 ENV/
 env/
 
-# Environment variables
+# Env
 .env
 .env.local
 
-# IDEs
-.vscode/
-.idea/
+# Logs
+*.log
 
-# OS generated files
+# Git
 .DS_Store
-Thumbs.db
