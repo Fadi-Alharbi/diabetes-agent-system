@@ -196,12 +196,13 @@ class VirtualCGMSensor:
                 # تنفيذ خط أنابيب الوكلاء
                 if pipeline_callback:
                     try:
-                        result = pipeline_callback(
-                            patient_id=self.patient_id,
-                            reading=reading,
-                            history=self.glucose_history.copy(),
-                            events=self.event_history.copy(),
-                            profile_type=self.profile_type
+                        result = await asyncio.to_thread(
+                            pipeline_callback,
+                            self.patient_id,
+                            reading,
+                            self.glucose_history.copy(),
+                            self.event_history.copy(),
+                            self.profile_type
                         )
                         self.latest_analysis = result
                         self.analysis_history.append(result)

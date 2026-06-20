@@ -8,7 +8,9 @@
 
 import logging
 from typing import Dict, Any, List
-
+from openai import OpenAI
+import os 
+import json
 logger = logging.getLogger("IMDCS_RecommendationAgent")
 
 
@@ -273,48 +275,81 @@ def generate_comprehensive_advice(
     behavioral_insights: List[str],
     recent_events: List[dict]
 ) -> Dict[str, Any]:
-    """
-    يولّد النصائح الطبية الشاملة والمخصصة للمريض بناءً على حالته الحالية.
-    
-    Returns:
-        Dict مع: patient_advice, action_steps, severity_explanation,
-        prevention_tips, next_meal_suggestion
-    """
-    # تحديد السيناريو المناسب
+
     scenario_key = _determine_scenario(current_glucose, predicted_30m, risk_level, trend, velocity)
-    advice = ADVICE_DATABASE[scenario_key]
+    fallback = ADVICE_DATABASE[scenario_key]
 
-    # إضافة سياق سلوكي مخصص
-    contextual_note_ar = ""
-    contextual_note_en = ""
+    try:
+        client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
 
-    if behavioral_insights:
-        contextual_note_ar = " | ".join(behavioral_insights[:2])
-        contextual_note_en = " | ".join(behavioral_insights[:2])
+        insights_text = "\n".join(behavioral_insights) if behavioral_insights else "لا توجد ملاحظات"
+        events_text = str(recent_events[-3:]) if recent_events else "لا توجد أحداث"
 
-    # بناء شرح مبسّط لمستوى الخطورة
-    severity_explanation = _build_severity_explanation(
-        current_glucose, predicted_30m, risk_level, trend, velocity
-    )
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            response_format={"type": "json_object"},
+            messages=[
+                {
+                    "role": "system",
+                    "content": "أنت طبيب متخصص في السكري. حلّل بيانات المريض وأرجع توصية طبية مخصصة بصيغة JSON فقط بهذا الشكل: {\"title\": \"\", \"title_en\": \"\", \"guidance_ar\": \"\", \"guidance_en\": \"\", \"action_steps_ar\": [], \"action_steps_en\": [], \"prevention_tips_ar\": [], \"prevention_tips_en\": [], \"meal_suggestion_ar\": \"\", \"meal_suggestion_en\": \"\"}"
+                },
+                {
+                    "role": "user",
+                    "content": f"السكر الحالي: {current_glucose} mg/dL\nالتوقع بعد 30 دقيقة: {predicted_30m:.0f} mg/dL\nالاتجاه: {trend}\nسرعة التغيير: {velocity:.2f}\nمستوى الخطر: {risk_level}\nالأحداث الأخيرة: {events_text}\nالملاحظات: {insights_text}"
+                }
+            ]
+        )
 
-    return {
-        "patient_advice": {
-            "title": advice["title"],
-            "title_en": advice["title_en"],
-            "severity": advice["severity"],
-            "guidance_ar": advice["guidance_ar"],
-            "guidance_en": advice["guidance_en"],
-            "contextual_note_ar": contextual_note_ar,
-            "contextual_note_en": contextual_note_en,
-        },
-        "action_steps": advice["action_steps_ar"],
-        "action_steps_en": advice.get("action_steps_en", []),
-        "severity_explanation": severity_explanation,
-        "prevention_tips": advice["prevention_tips_ar"],
-        "prevention_tips_en": advice.get("prevention_tips_en", []),
-        "next_meal_suggestion": advice["meal_suggestion_ar"],
-        "next_meal_suggestion_en": advice.get("meal_suggestion_en", ""),
-    }
+        ai_advice = json.loads(response.choices[0].message.content)
+
+        severity_explanation = _build_severity_explanation(
+            current_glucose, predicted_30m, risk_level, trend, velocity
+        )
+
+        return {
+            "patient_advice": {
+                "title": ai_advice.get("title", fallback["title"]),
+                "title_en": ai_advice.get("title_en", fallback["title_en"]),
+                "severity": risk_level,
+                "guidance_ar": ai_advice.get("guidance_ar", fallback["guidance_ar"]),
+                "guidance_en": ai_advice.get("guidance_en", fallback["guidance_en"]),
+                "contextual_note_ar": insights_text,
+                "contextual_note_en": "",
+            },
+            "action_steps": ai_advice.get("action_steps_ar", fallback["action_steps_ar"]),
+            "action_steps_en": ai_advice.get("action_steps_en", []),
+            "severity_explanation": severity_explanation,
+            "prevention_tips": ai_advice.get("prevention_tips_ar", fallback["prevention_tips_ar"]),
+            "prevention_tips_en": ai_advice.get("prevention_tips_en", []),
+            "next_meal_suggestion": ai_advice.get("meal_suggestion_ar", fallback["meal_suggestion_ar"]),
+            "next_meal_suggestion_en": ai_advice.get("meal_suggestion_en", ""),
+        }
+
+    except Exception as e:
+        logger.error(f"خطأ في الاتصال بالذكاء الاصطناعي: {e}")
+
+        severity_explanation = _build_severity_explanation(
+            current_glucose, predicted_30m, risk_level, trend, velocity
+        )
+
+        return {
+            "patient_advice": {
+                "title": fallback["title"],
+                "title_en": fallback["title_en"],
+                "severity": risk_level,
+                "guidance_ar": fallback["guidance_ar"],
+                "guidance_en": fallback["guidance_en"],
+                "contextual_note_ar": "",
+                "contextual_note_en": "",
+            },
+            "action_steps": fallback["action_steps_ar"],
+            "action_steps_en": fallback.get("action_steps_en", []),
+            "severity_explanation": severity_explanation,
+            "prevention_tips": fallback["prevention_tips_ar"],
+            "prevention_tips_en": fallback.get("prevention_tips_en", []),
+            "next_meal_suggestion": fallback["meal_suggestion_ar"],
+            "next_meal_suggestion_en": fallback.get("meal_suggestion_en", ""),
+        }
 
 
 def _determine_scenario(
